@@ -341,7 +341,7 @@ impl ClusterInfo {
 
     /// cluster version decrease
     pub(crate) fn cluster_version_update(&self) {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = DefaultHasher::new();
         self.all_members_peer_urls()
             .into_iter()
             .sorted()

@@ -10,6 +10,9 @@ readme = "README.md"
 categories = ["Test"]
 keywords = ["Test", "Deterministic Simulation"]
 
+[lints]
+workspace = true
+
 [dependencies]
 async-trait = "0.1.81"
 bincode = "1.3.3"

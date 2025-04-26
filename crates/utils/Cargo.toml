@@ -11,6 +11,9 @@ keywords = ["utilities"]
 categories = ["utilities"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lints]
+workspace = true
+
 [features]
 full = ["std", "tokio", "parking_lot"]
 std = []

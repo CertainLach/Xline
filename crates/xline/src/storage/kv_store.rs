@@ -1623,7 +1623,7 @@ mod test {
                 }
             }
         });
-        tokio::time::sleep(std::time::Duration::from_micros(50)).await;
+        tokio::time::sleep(Duration::from_micros(50)).await;
         let revs = store.inner.index.get_from_rev(b"foo", b"", 1);
         let kvs = KvStoreInner::get_values(&db.transaction(), &revs).unwrap();
         assert_eq!(

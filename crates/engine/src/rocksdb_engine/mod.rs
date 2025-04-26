@@ -136,7 +136,7 @@ impl RocksEngine {
     where
         P: AsRef<Path>,
     {
-        let mut snapshot_f = tokio::fs::File::open(snap_path).await?;
+        let mut snapshot_f = File::open(snap_path).await?;
         let tmp_path = temp_dir().join(format!("snapshot-{}", uuid::Uuid::new_v4()));
         let mut rocks_snapshot = RocksSnapshot::new_for_receiving(tmp_path)?;
         let mut buf = BytesMut::with_capacity(SNAPSHOT_CHUNK_SIZE);
@@ -691,12 +691,12 @@ impl SnapshotApi for RocksSnapshot {
     }
 
     #[inline]
-    async fn read_buf(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
+    async fn read_buf(&mut self, buf: &mut BytesMut) -> io::Result<()> {
         self.read(buf).await.map(|_n| ())
     }
 
     #[inline]
-    async fn write_all(&mut self, mut buf: Bytes) -> std::io::Result<()> {
+    async fn write_all(&mut self, mut buf: Bytes) -> io::Result<()> {
         let buf_size = buf.remaining();
         while buf.has_remaining() {
             let prev_rem = buf.remaining();
@@ -707,7 +707,7 @@ impl SnapshotApi for RocksSnapshot {
                 if written_size == size {
                     break;
                 }
-                return Err(io::ErrorKind::WriteZero.into());
+                return Err(ErrorKind::WriteZero.into());
             }
         }
         Ok(())

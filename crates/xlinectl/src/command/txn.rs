@@ -30,7 +30,7 @@ pub(crate) fn build_request(matches: &ArgMatches) -> Result<TxnRequest> {
                     line.as_ref()
                         .map_or_else(|_| false, |l| !l.trim().is_empty())
                 })
-                .collect::<std::io::Result<_>>()?)
+                .collect::<io::Result<_>>()?)
         }
 
         println!("Type an empty line to finish input");
