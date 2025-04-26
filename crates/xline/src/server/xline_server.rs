@@ -84,10 +84,12 @@ pub struct XlineServer {
     /// Auth config
     auth_config: AuthConfig,
     /// Client tls config
-    client_tls_config: Option<ClientTlsConfig>,
+    peer_client_tls_config: Option<ClientTlsConfig>,
     /// Server tls config
     #[cfg_attr(madsim, allow(unused))]
-    server_tls_config: Option<ServerTlsConfig>,
+    peer_server_tls_config: Option<ServerTlsConfig>,
+    /// Client server tls config
+    client_server_tls_config: Option<ServerTlsConfig>,
     /// Task Manager
     task_manager: Arc<TaskManager>,
     /// Curp storage
@@ -109,15 +111,18 @@ impl XlineServer {
         #[cfg_attr(madsim, allow(unused_variables))] tls_config: TlsConfig,
     ) -> Result<Self> {
         #[cfg(not(madsim))]
-        let (client_tls_config, server_tls_config) = Self::read_tls_config(&tls_config).await?;
+        let (peer_client_tls_config, peer_server_tls_config) =
+            Self::read_peer_tls_config(&tls_config).await?;
         #[cfg(madsim)]
-        let (client_tls_config, server_tls_config) = (None, None);
+        let (peer_client_tls_config, peer_server_tls_config) = (None, None);
+        let client_server_tls_config = Self::read_client_tls_config(&tls_config).await?;
+
         let curp_storage = Arc::new(CurpDB::open(&cluster_config.curp_config().engine_cfg)?);
         let cluster_info = Arc::new(
             Self::init_cluster_info(
                 &cluster_config,
                 curp_storage.as_ref(),
-                client_tls_config.as_ref(),
+                peer_client_tls_config.as_ref(),
             )
             .await?,
         );
@@ -127,8 +132,9 @@ impl XlineServer {
             storage_config,
             compact_config,
             auth_config,
-            client_tls_config,
-            server_tls_config,
+            peer_client_tls_config,
+            peer_server_tls_config,
+            client_server_tls_config,
             task_manager: Arc::new(TaskManager::new()),
             curp_storage,
         })
@@ -304,13 +310,11 @@ impl XlineServer {
             auth_wrapper,
             curp_client,
         ) = self.init_servers(db, key_pair).await?;
-        let mut builder = Server::builder();
-        #[cfg(not(madsim))]
-        if let Some(ref cfg) = self.server_tls_config {
-            builder = builder.tls_config(cfg.clone())?;
+        let mut xline_router = Server::builder();
+        if let Some(ref cfg) = self.client_server_tls_config {
+            xline_router = xline_router.tls_config(cfg.clone())?;
         }
-        let xline_router = builder
-            .clone()
+        let xline_router = xline_router
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
             .add_service(RpcLeaseServer::from_arc(lease_server))
@@ -319,7 +323,12 @@ impl XlineServer {
             .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(RpcClusterServer::new(cluster_server))
             .add_service(ProtocolServer::new(auth_wrapper));
-        let curp_router = builder
+        let mut curp_router = Server::builder();
+        #[cfg(not(madsim))]
+        if let Some(ref cfg) = self.peer_server_tls_config {
+            curp_router = curp_router.tls_config(cfg.clone())?;
+        }
+        let curp_router = curp_router
             .add_service(ProtocolServer::new(curp_server.clone()))
             .add_service(InnerProtocolServer::new(curp_server));
         #[cfg(not(madsim))]
@@ -515,14 +524,14 @@ impl XlineServer {
             Arc::clone(&curp_config),
             Arc::clone(&self.curp_storage),
             Arc::clone(&self.task_manager),
-            self.client_tls_config.clone(),
+            self.peer_client_tls_config.clone(),
             XlineSpeculativePools::new(Arc::clone(&lease_collection)).into_inner(),
             XlineUncommittedPools::new(lease_collection).into_inner(),
         );
 
         let client = Arc::new(
             CurpClientBuilder::new(*self.cluster_config.client_config(), false)
-                .tls_config(self.client_tls_config.clone())
+                .tls_config(self.peer_client_tls_config.clone())
                 .cluster_version(self.cluster_info.cluster_version())
                 .all_members(self.cluster_info.all_members_peer_urls())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())
@@ -554,7 +563,7 @@ impl XlineServer {
                 Arc::clone(&auth_storage),
                 Arc::clone(&id_gen),
                 &self.cluster_info.self_peer_urls(),
-                self.client_tls_config.as_ref(),
+                self.peer_client_tls_config.as_ref(),
             ),
             LeaseServer::new(
                 lease_storage,
@@ -562,7 +571,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
-                self.client_tls_config.clone(),
+                self.peer_client_tls_config.clone(),
                 &self.task_manager,
             ),
             AuthServer::new(Arc::clone(&client), Arc::clone(&auth_storage)),
@@ -625,63 +634,73 @@ impl XlineServer {
         }
     }
 
+    async fn read_client_tls_config(tls_config: &TlsConfig) -> Result<Option<ServerTlsConfig>> {
+        Ok(
+            match (
+                tls_config.client_ca_cert_path().as_ref(),
+                tls_config.client_cert_path().as_ref(),
+                tls_config.client_key_path().as_ref(),
+            ) {
+                (None, None, None) => None,
+                (Some(ca_path), Some(cert_path), Some(key_path)) => {
+                    let ca = fs::read(ca_path).await?;
+                    let cert = fs::read(cert_path).await?;
+                    let key = fs::read(key_path).await?;
+                    Some(
+                        ServerTlsConfig::new()
+                            .client_ca_root(Certificate::from_pem(ca))
+                            .identity(Identity::from_pem(cert, key)),
+                    )
+                }
+                (Some(ca_path), None, None) => {
+                    let ca = fs::read(ca_path).await?;
+                    Some(ServerTlsConfig::new().client_ca_root(Certificate::from_pem(ca)))
+                }
+                _ => {
+                    return Err(anyhow!(
+                        "client_cert_path and client_key_path must be both set"
+                    ))
+                }
+            },
+        )
+    }
+
     /// Read tls cert and key from file
     #[cfg(not(madsim))]
-    async fn read_tls_config(
+    async fn read_peer_tls_config(
         tls_config: &TlsConfig,
     ) -> Result<(Option<ClientTlsConfig>, Option<ServerTlsConfig>)> {
-        let client_tls_config = match (
-            tls_config.client_ca_cert_path().as_ref(),
-            tls_config.client_cert_path().as_ref(),
-            tls_config.client_key_path().as_ref(),
-        ) {
-            (Some(ca_path), Some(cert_path), Some(key_path)) => {
-                let ca = fs::read(ca_path).await?;
-                let cert = fs::read(cert_path).await?;
-                let key = fs::read(key_path).await?;
-                Some(
-                    ClientTlsConfig::new()
-                        .ca_certificate(Certificate::from_pem(ca))
-                        .identity(Identity::from_pem(cert, key)),
-                )
-            }
-            (Some(ca_path), None, None) => {
-                let ca = fs::read(ca_path).await?;
-                Some(ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca)))
-            }
-            (_, Some(_), None) | (_, None, Some(_)) => {
-                return Err(anyhow!(
-                    "client_cert_path and client_key_path must be both set"
-                ))
-            }
-            _ => None,
-        };
-        let server_tls_config = match (
-            tls_config.peer_ca_cert_path().as_ref(),
-            tls_config.peer_cert_path().as_ref(),
-            tls_config.peer_key_path().as_ref(),
-        ) {
-            (Some(ca_path), Some(cert_path), Some(key_path)) => {
-                let ca = fs::read(ca_path).await?;
-                let cert = fs::read_to_string(cert_path).await?;
-                let key = fs::read_to_string(key_path).await?;
-                Some(
-                    ServerTlsConfig::new()
-                        .client_ca_root(Certificate::from_pem(ca))
-                        .identity(Identity::from_pem(cert, key)),
-                )
-            }
-            (None, Some(cert_path), Some(key_path)) => {
-                let cert = fs::read_to_string(cert_path).await?;
-                let key = fs::read_to_string(key_path).await?;
-                Some(ServerTlsConfig::new().identity(Identity::from_pem(cert, key)))
-            }
-            (_, Some(_), None) | (_, None, Some(_)) => {
-                return Err(anyhow!("peer_cert_path and peer_key_path must be both set"))
-            }
-            _ => None,
-        };
-        Ok((client_tls_config, server_tls_config))
+        Ok(
+            match (
+                tls_config.peer_ca_cert_path().as_ref(),
+                tls_config.peer_cert_path().as_ref(),
+                tls_config.peer_key_path().as_ref(),
+            ) {
+                (None, None, None) => (None, None),
+                (Some(ca_path), Some(cert_path), Some(key_path)) => {
+                    let ca = fs::read(ca_path).await?;
+                    let cert = fs::read_to_string(cert_path).await?;
+                    let key = fs::read_to_string(key_path).await?;
+                    (
+                        Some(
+                            ClientTlsConfig::new()
+                                .ca_certificate(Certificate::from_pem(&ca))
+                                .identity(Identity::from_pem(&cert, &key)),
+                        ),
+                        Some(
+                            ServerTlsConfig::new()
+                                .client_ca_root(Certificate::from_pem(ca))
+                                .identity(Identity::from_pem(cert, key)),
+                        ),
+                    )
+                }
+                _ => {
+                    return Err(anyhow!(
+                        "peer_ca_cert_path, peer_cert_path and peer_key_path must be all set"
+                    ))
+                }
+            },
+        )
     }
 }
 
