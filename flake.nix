@@ -45,6 +45,7 @@
               cargo-hakari
               cargo-edit
               rustPlatform.bindgenHook
+              gdb
             ];
 
             environment.PROTOC = "${pkgs.protobuf}/bin/protoc";
