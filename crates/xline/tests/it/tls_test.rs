@@ -102,10 +102,10 @@ fn basic_tls_configs(size: usize) -> Vec<XlineServerConfig> {
     configs_with_tls_config(
         size,
         TlsConfig::new(
-            None,
+            Some(PathBuf::from("../../fixtures/ca.crt")),
             Some(PathBuf::from("../../fixtures/server.crt")),
             Some(PathBuf::from("../../fixtures/server.key")),
-            Some(PathBuf::from("../../fixtures/ca.crt")),
+            None,
             None,
             None,
         ),
