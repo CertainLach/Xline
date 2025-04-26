@@ -64,8 +64,8 @@ pub fn init_subscriber(
             .install_batch(),
         )
     });
-    let jaeger_fmt_layer = tracing_subscriber::fmt::layer()
-        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
+    let jaeger_fmt_layer =
+        tracing_subscriber::fmt::layer().with_filter(EnvFilter::from_default_env());
     let writer = generate_writer(name, log_config);
     let (non_blocking, guard) = tracing_appender::non_blocking(writer);
     let filter = EnvFilter::try_from_default_env()

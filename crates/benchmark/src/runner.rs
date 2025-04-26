@@ -271,7 +271,7 @@ impl CommandRunner {
             let bar_clone = Arc::clone(&bar);
             let _handle = tokio::spawn(async move {
                 while !bar_clone.is_finished() {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                     debug!("progress: {}/{}", bar_clone.position(), bar_len);
                 }
             });

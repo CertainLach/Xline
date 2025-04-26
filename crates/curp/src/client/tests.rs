@@ -478,7 +478,7 @@ async fn test_retry_propose_return_no_retry_error() {
             .propose(&TestCommand::new_put(vec![1], 1), None, false)
             .await
             .unwrap_err();
-        assert_eq!(err.message(), tonic::Status::from(early_err).message());
+        assert_eq!(err.message(), Status::from(early_err).message());
         assert_eq!(*counter.lock().unwrap(), 1);
     }
 }

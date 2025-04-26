@@ -342,7 +342,7 @@ impl<C> Connect<C> {
     #[cfg(feature = "client-metrics")]
     fn before_rpc<Req>(&self) -> std::time::Instant {
         super::metrics::get().peer_sent_bytes_total.add(
-            std::mem::size_of::<Req>().max(1).numeric_cast(),
+            size_of::<Req>().max(1).numeric_cast(),
             &[opentelemetry::KeyValue::new("to", self.id.to_string())],
         );
         std::time::Instant::now()
